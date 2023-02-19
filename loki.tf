@@ -1,6 +1,7 @@
 locals {
   loki_bucket_name     = format("%s-loki-%s", var.resource_name_prefix, local.short_region_name)
   hosts_parameter_name = format("%s-loki-hosts", var.resource_name_prefix)
+  subnet_count         = length(var.subnet_ids)
 }
 
 resource "aws_iam_instance_profile" "loki" {
@@ -105,7 +106,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "loki" {
 resource "aws_security_group" "loki" {
   name        = format("%s-loki", var.resource_name_prefix)
   description = "security group for loki instances"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = var.vpc_id
 
   ingress {
     description = "all"
@@ -115,13 +116,6 @@ resource "aws_security_group" "loki" {
     self        = true
   }
 
-  ingress {
-    description     = "ssh"
-    from_port       = 22
-    to_port         = 22
-    protocol        = "tcp"
-    security_groups = [aws_security_group.bastion.id]
-  }
   egress {
     from_port   = 0
     to_port     = 0
@@ -136,12 +130,11 @@ resource "aws_security_group" "loki" {
 
 resource "aws_instance" "loki" {
   for_each = {
-    for index in range(0, var.private_subnet_count) : index => index
+    for index, subnet_id in var.subnet_ids : index => subnet_id
   }
-  ami                    = local.ami["ubuntu2204"][data.aws_region.current.name]
+  ami                    = var.debian_ami
   instance_type          = "t2.micro" # TODO determine right flavor
-  key_name               = format("%s-hxie", var.resource_name_prefix)
-  subnet_id              = aws_subnet.private[each.key].id
+  subnet_id              = each.value
   vpc_security_group_ids = [aws_security_group.loki.id]
   root_block_device {
     # use aws/ebs key
@@ -177,7 +170,7 @@ resource "aws_alb" "loki" {
   internal           = true # no plan to expose to public
   load_balancer_type = "application"
   security_groups    = [aws_security_group.loki.id]
-  subnets            = [for subnet in aws_subnet.private : subnet.id]
+  subnets            = var.subnet_ids
 
   enable_deletion_protection = false
   access_logs {
@@ -193,7 +186,7 @@ resource "aws_alb" "loki" {
 
 resource "aws_alb_target_group" "loki_rest" {
   name     = format("%s-loki-rest", var.resource_name_prefix)
-  vpc_id   = aws_vpc.main.id
+  vpc_id   = var.vpc_id
   port     = var.loki_ports["rest"]
   protocol = "HTTP"
 
@@ -217,10 +210,10 @@ resource "aws_alb_listener" "loki_rest" {
 
 resource "aws_alb_target_group_attachment" "loki_rest" {
   for_each = {
-    for index in range(0, var.private_subnet_count) : index => index
+    for index, subnet_id in var.subnet_ids : index => subnet_id
   }
   target_group_arn = aws_alb_target_group.loki_rest.arn
-  target_id        = aws_instance.loki[each.key].id
+  target_id        = each.value
   port             = var.loki_ports["rest"]
 }
 
