@@ -71,6 +71,11 @@ resource "aws_iam_role_policy" "loki" {
   })
 }
 
+resource "aws_iam_role_policy_attachment" "loki_ssm" {
+  role       = aws_iam_role.loki.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_s3_bucket" "loki" {
   bucket = local.loki_bucket_name
 }
